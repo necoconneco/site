@@ -66,6 +66,17 @@
       background:#111; color:#fff; padding:10px 14px; text-align:center;
       z-index:20; border-top:1px solid #333;
     }
+
+    /* ### ADDED ### Fullscreen iframe overlay so the URL doesn't change */
+    .overlay{ position:fixed; inset:0; background:#000; z-index:9999; display:flex; }
+    .overlay__frame{ flex:1; border:none; width:100%; height:100%; display:block; }
+    .overlay__close{
+      position:fixed; top:10px; right:10px;
+      background:rgba(255,255,255,.12); color:#fff;
+      border:1px solid rgba(255,255,255,.35);
+      border-radius:8px; padding:6px 10px; font-weight:700; cursor:pointer;
+      z-index:10000;
+    }
   </style>
 </head>
 <body>
@@ -115,11 +126,61 @@
     btn.id = 'btn_' + Math.random().toString(36).slice(2,10);
     center.appendChild(btn);
 
+    const IFRAME_MODE = true; 
+
+    function openOverlay(url){
+      const prevHtmlOverflow = document.documentElement.style.overflow;
+      const prevBodyOverflow = document.body.style.overflow;
+      document.documentElement.style.overflow = 'hidden';
+      document.body.style.overflow = 'hidden';
+
+      const ov = document.createElement('div');
+      ov.className = 'overlay';
+
+      const fr = document.createElement('iframe');
+      fr.className = 'overlay__frame';
+      fr.src = url;
+      fr.setAttribute('sandbox','allow-same-origin allow-scripts allow-forms allow-popups');
+      fr.setAttribute('allowfullscreen','');
+
+      const close = document.createElement('button');
+      close.className = 'overlay__close';
+      close.textContent = '×';
+      close.title = 'Close (Esc)';
+      close.addEventListener('click', () => {
+        document.body.removeChild(ov);
+        document.body.removeChild(close);
+        document.documentElement.style.overflow = prevHtmlOverflow;
+        document.body.style.overflow = prevBodyOverflow;
+        history.replaceState({}, '', location.pathname); 
+      }, { passive:true });
+
+      ov.appendChild(fr);
+      document.body.appendChild(ov);
+      document.body.appendChild(close);
+
+      try { history.pushState({overlay:true}, '', '#mc'); } catch(e){}
+
+      fr.addEventListener('load', () => { try { fr.contentWindow.focus(); } catch(e){} }, { once:true });
+
+      window.addEventListener('keydown', function onKey(e){
+        if (e.key === 'Escape'){
+          close.click();
+          window.removeEventListener('keydown', onKey, { passive:true });
+        }
+      }, { passive:true });
+    }
+
     btn.addEventListener('click', (ev) => {
       if (!ev.isTrusted) return;      
       if (btn.disabled) return;
       const target = atob(NC);
-      window.location.href = target;
+
+      if (IFRAME_MODE){
+        openOverlay(target);
+      } else {
+        window.location.href = target;
+      }
     }, { passive:true });
 
     const cvs = document.getElementById('field');
