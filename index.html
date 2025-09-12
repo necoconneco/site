@@ -1,1 +1,280 @@
-:)
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>NecoConneco</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noarchive, nosnippet, noimageindex, noai" />
+  <style>
+    :root{
+      --bg:#000;   /* black */
+      --fg:#fff;   /* white */
+      --muted:#aaa;
+    }
+    *{ box-sizing:border-box; }
+    html,body{ height:100%; }
+    body{
+      margin:0;
+      background:var(--bg);
+      color:var(--fg);
+      font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,"Noto Sans",Arial,sans-serif;
+      overflow:hidden; /* arrows start off-screen */
+    }
+
+    /* Fullscreen canvas for curved spiral arrows */
+    #field{
+      position:fixed; inset:0;
+      width:100vw; height:100vh;
+      display:block; background:var(--bg);
+      z-index:0;
+    }
+
+    /* Center card with button */
+    .center{
+      position:fixed; left:50%; top:50%;
+      transform:translate(-50%,-50%);
+      display:grid; gap:10px; place-items:center;
+      min-width:260px; text-align:center;
+      padding:24px 28px;
+      border:1px solid var(--fg);
+      border-radius:14px;
+      background:rgba(0,0,0,.65);
+      z-index:10;
+    }
+    .title{ font-weight:800; letter-spacing:.3px; }
+    .hint{ color:var(--muted); }
+
+    .gate{
+      appearance:none;
+      border:1px solid var(--fg);
+      color:#000; background:var(--fg);
+      padding:12px 22px; border-radius:999px;
+      font-weight:900; font-size:1.05rem;
+      cursor:pointer;
+      transition:transform .1s ease, filter .15s ease, background .15s ease, color .15s ease;
+    }
+    .gate:hover{ transform:translateY(-1px); }
+    .gate:active{ transform:translateY(1px) scale(.99); }
+    .gate[disabled]{ filter:grayscale(1) brightness(.7); cursor:not-allowed; }
+
+    @media (prefers-reduced-motion: reduce){
+      #field{ opacity:.85; }
+    }
+
+    noscript{
+      position:fixed; left:0; right:0; bottom:0;
+      background:#111; color:#fff; padding:10px 14px; text-align:center;
+      z-index:20; border-top:1px solid #333;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="field" aria-hidden="true"></canvas>
+
+  <div class="center" id="center">
+    <div class="title">NecoConneco</div>
+    <div class="hint" id="status">Locked</div>
+  </div>
+
+  <noscript>JavaScript Required</noscript>
+
+  <script>
+    const NC = "bWNqc29uLmh0bWw=";
+
+    const DPR = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    const REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    const ARROW_COUNT = REDUCED ? 16 : 36;
+    const LINE_W = 1.6;               
+    const HEAD_SIZE = 10;             
+    const TAIL_FRAC_MIN = 0.22;
+    const TAIL_FRAC_MAX = 0.45;
+
+    const SPEED_MIN = 0.01;           
+    const SPEED_MAX = 0.1;
+    const TURNS_MIN = 9;             
+    const TURNS_MAX = 9;
+    const R0_PAD = 80;                
+    const END_PAD = 2;                
+    const P1_SCALE = 0.55;            
+    const P2_SCALE = 0.16;            
+    const P1_WOBBLE = 0.15;           
+    const P2_WOBBLE = 0.08;
+
+    let activationTriggered = false;
+
+    const center = document.getElementById('center');
+    const status = document.getElementById('status');
+
+    const btn = document.createElement('button');
+    btn.className = 'gate';
+    btn.type = 'button';
+    btn.textContent = 'Enter';
+    btn.setAttribute('aria-label', 'Enter');
+    btn.disabled = true;
+    btn.id = 'btn_' + Math.random().toString(36).slice(2,10);
+    center.appendChild(btn);
+
+    btn.addEventListener('click', (ev) => {
+      if (!ev.isTrusted) return;      
+      if (btn.disabled) return;
+      const target = atob(NC);
+      window.location.href = target;
+    }, { passive:true });
+
+    const cvs = document.getElementById('field');
+    const ctx = cvs.getContext('2d');
+
+    let W,H,CX,CY,RMAX,ACTIVATE_R,lastT=0;
+
+    function measureActivateRadius(){
+      const r = center.getBoundingClientRect();
+      ACTIVATE_R = Math.max(r.width, r.height) * 0.62;
+    }
+    function resize(){
+      W = cvs.clientWidth;
+      H = cvs.clientHeight;
+      cvs.width  = Math.floor(W * DPR);
+      cvs.height = Math.floor(H * DPR);
+      ctx.setTransform(DPR,0,0,DPR,0,0);
+      CX = W/2; CY = H/2;
+      RMAX = Math.hypot(W, H)/2 + R0_PAD;
+      measureActivateRadius();
+    }
+    window.addEventListener('resize', resize, { passive:true });
+    resize();
+
+    function polar(r, th){ return [CX + r*Math.cos(th), CY + r*Math.sin(th)]; }
+    function norm2(x,y){ const m=Math.hypot(x,y)||1; return [x/m, y/m]; }
+
+    function bez(P0,P1,P2,P3,u){
+      const v=1-u;
+      const v2=v*v, u2=u*u;
+      const v3=v2*v, u3=u2*u;
+      const x = v3*P0[0] + 3*v2*u*P1[0] + 3*v*u2*P2[0] + u3*P3[0];
+      const y = v3*P0[1] + 3*v2*u*P1[1] + 3*v*u2*P2[1] + u3*P3[1];
+      return [x,y];
+    }
+    function dbez(P0,P1,P2,P3,u){
+      const v=1-u;
+      const x = 3*v*v*(P1[0]-P0[0]) + 6*v*u*(P2[0]-P1[0]) + 3*u*u*(P3[0]-P2[0]);
+      const y = 3*v*v*(P1[1]-P0[1]) + 6*v*u*(P2[1]-P1[1]) + 3*u*u*(P3[1]-P2[1]);
+      return [x,y];
+    }
+
+    function rand(a,b){ return a + Math.random()*(b-a); }
+    function choice(){ return Math.random()<0.5 ? -1 : 1; }
+
+    function spawnArrow(){
+      const dir = choice();                                
+      const theta0 = rand(0, Math.PI*2);
+      const turns = rand(TURNS_MIN, TURNS_MAX);
+      const theta3 = theta0 + dir * turns * Math.PI*2;
+
+      const r0 = RMAX + rand(0, 100);
+      const r3 = ACTIVATE_R + END_PAD + rand(-6, 10);      
+
+      const P0 = polar(r0, theta0);
+      const P3 = polar(r3, theta3);
+
+      const t0 = [-Math.sin(theta0)*r0, Math.cos(theta0)*r0];
+      let u0 = norm2(t0[0], t0[1]); 
+      const wob0 = (Math.random()*2-1) * P1_WOBBLE;
+      const wob0n = [-Math.cos(theta0), -Math.sin(theta0)]; 
+      const P1 = [P0[0] + (u0[0] + wob0*wob0n[0]) * r0 * P1_SCALE,
+                  P0[1] + (u0[1] + wob0*wob0n[1]) * r0 * P1_SCALE];
+
+      const toCenter = [CX - P3[0], CY - P3[1]];
+      const uC = norm2(toCenter[0], toCenter[1]);
+      const wob1 = (Math.random()*2-1) * P2_WOBBLE;
+      const side = [-uC[1], uC[0]];
+      const P2 = [P3[0] - (uC[0] + wob1*side[0]) * r0 * P2_SCALE,
+                  P3[1] - (uC[1] + wob1*side[1]) * r0 * P2_SCALE];
+
+      const speed = rand(SPEED_MIN, SPEED_MAX);
+      const tailFrac = rand(TAIL_FRAC_MIN, TAIL_FRAC_MAX);
+
+      return {
+        P0,P1,P2,P3,
+        uHead: 0,
+        speed,
+        tailFrac
+      };
+    }
+
+    const arrows = [];
+    while (arrows.length < ARROW_COUNT) arrows.push(spawnArrow());
+
+    function triggerActivation(){
+      if (activationTriggered) return;
+      activationTriggered = true;
+      btn.disabled = false;
+      status.textContent = 'Unlocked! Click To Enter.';
+    }
+
+    function drawCurvedArrow(a, u0, u1){
+      const STEPS = 18;
+      const du = (u1 - u0) / STEPS;
+
+      ctx.lineWidth = LINE_W;
+      ctx.strokeStyle = '#fff';
+      ctx.fillStyle = '#fff';
+
+      let [px,py] = bez(a.P0,a.P1,a.P2,a.P3,u0);
+      ctx.beginPath();
+      ctx.moveTo(px,py);
+      for (let i=1;i<=STEPS;i++){
+        const u = u0 + du*i;
+        const [x,y] = bez(a.P0,a.P1,a.P2,a.P3,u);
+        ctx.lineTo(x,y);
+      }
+      ctx.stroke();
+
+      const [hx,hy] = bez(a.P0,a.P1,a.P2,a.P3,u1);
+      const [dx,dy] = dbez(a.P0,a.P1,a.P2,a.P3,u1);
+      const [ux,uy] = norm2(dx,dy);
+
+      const hl = HEAD_SIZE;
+      const left = [-uy, ux], right = [uy, -ux];
+
+      ctx.beginPath();
+      ctx.moveTo(hx, hy);
+      ctx.lineTo(hx - ux*hl + left[0]*hl*0.6,  hy - uy*hl + left[1]*hl*0.6);
+      ctx.lineTo(hx - ux*hl + right[0]*hl*0.6, hy - uy*hl + right[1]*hl*0.6);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    function step(ts){
+      const t = ts/1000;
+      const dt = lastT ? Math.min(0.05, t - lastT) : 0;
+      lastT = t;
+
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0,0,W,H);
+
+      for (let i=0;i<arrows.length;i++){
+        const a = arrows[i];
+        a.uHead += a.speed * dt;
+
+        const uFade = Math.min(1, a.uHead);
+        ctx.globalAlpha = 0.3 + 0.7 * (1 - (uFade*0.85)); 
+
+        if (a.uHead >= 1){
+          drawCurvedArrow(a, Math.max(0, 1 - a.tailFrac), 1);
+          triggerActivation();
+          arrows[i] = spawnArrow();
+          continue;
+        }
+
+        const uTail = Math.max(0, a.uHead - a.tailFrac);
+        drawCurvedArrow(a, uTail, a.uHead);
+      }
+
+      ctx.globalAlpha = 1;
+      requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  </script>
+</body>
+</html>
