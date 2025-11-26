@@ -100,13 +100,13 @@
     .btn{appearance:none;border:1px solid var(--chip-b);background:linear-gradient(180deg,#1a2336,#0f141f);color:var(--text);padding:8px 12px;border-radius:10px;cursor:pointer;font-weight:600}
     .btn:disabled{opacity:.6;cursor:not-allowed}
     .hidden{display:none!important}
-    .hostnames,.location{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px;display:block}
+    .hostnames{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px;display:block}
 
     th.motdCol, td.motdCol { width: 360px; max-width: 360px; min-width: 360px; }
     td.motdCol { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     @media (max-width:1200px){
       .row{grid-template-columns:1fr}
-      .hostnames,.location{max-width:160px}
+      .hostnames{max-width:160px}
       th.motdCol, td.motdCol { width: 260px; max-width:260px; min-width:260px; }
     }
   </style>
@@ -114,20 +114,17 @@
 <body>
   <div class="wrap">
     <h1>NecoConneco's Collection of Australian Minecraft Servers</h1>
-    <div class="muted">Last Updated 8th October 2025</div>
+    <div class="muted">Enjoy!</div>
 
     <div class="panel">
       <div class="row">
         <div class="search">
           🔎
-          <input id="q" placeholder="Filter: IP, host, map, desc, city, etc..." />
+          <input id="q" placeholder="Filter: IP, host, map, desc, etc..." />
           <select id="type" title="Type">
             <option value="">All types</option>
             <option>Bedrock</option>
             <option>Java</option>
-          </select>
-          <select id="country" title="Country">
-            <option value="">All countries</option>
           </select>
         </div>
         <div class="pagination hidden" id="pagerTop">
@@ -157,8 +154,8 @@
             <th class="motdCol" data-sort="motd">MOTD / Map <span class="sort">↕</span></th>
             <th data-sort="players">Players <span class="sort">↕</span></th>
             <th data-sort="version">Version <span class="sort">↕</span></th>
-            <th data-sort="location">Location <span class="sort">↕</span></th>
-            <th data-sort="org">Org / ASN <span class="sort">↕</span></th>
+            <th data-sort="serverType">Server Type <span class="sort">↕</span></th>
+            <th data-sort="protocol">Protocol <span class="sort">↕</span></th>
             <th data-sort="hostnames">Hostnames <span class="sort">↕</span></th>
             <th data-sort="timestamp">Seen <span class="sort">↕</span></th>
             <th data-sort="notes">Notes <span class="sort">↕</span></th>
@@ -181,8 +178,8 @@
   </div>
 
   <script>
-  const DATA_URL = './data.json';
-  const NOTES_URL = './notes.txt';
+  const DATA_URL = 'data.json';
+  const NOTES_URL = 'notes.txt';
 
   const $ = s => document.querySelector(s);
   const $$ = s => Array.from(document.querySelectorAll(s));
@@ -192,7 +189,6 @@
     rows: [],
     filtered: [],
     notes: new Map(),
-    countries: new Set(),
     sortKey: 'timestamp',
     sortDir: 'desc',
     page: 1,
@@ -222,12 +218,27 @@
     return out;
   }
   function classifyType(obj){
+    const explicit = (obj.server_type || '').toString().toLowerCase();
+    if (explicit === 'java') return 'Java';
+    if (explicit === 'bedrock') return 'Bedrock';
+
     const transport = (obj.transport||'').toLowerCase();
     const port = Number(obj.port);
     const brand = safe(obj,'minecraft.brand','');
     const verName = safe(obj,'minecraft.version.name','') || obj.version || '';
     if (transport==='udp' || port===19132 || /bedrock|mcpe/i.test(brand) || /bedrock/i.test(verName)) return 'Bedrock';
     return 'Java';
+  }
+  function extractVersionNumber(obj, mc){
+    const baseVersion = (obj.version || '').toString();
+    let m = baseVersion.match(/(\d+\.\d+(?:\.\d+)?)/);
+    if (m) return m[1];
+
+    const vn = (safe(mc,'version.name','') || '').toString();
+    m = vn.match(/(\d+\.\d+(?:\.\d+)?)/);
+    if (m) return m[1];
+
+    return '';
   }
   function normRow(obj){
     const type = classifyType(obj);
@@ -237,53 +248,108 @@
     const mc = obj.minecraft || {};
     const motd = (mc.description || (obj.description && obj.description.text) || mc.map || obj.data || '').toString().split('\n')[0];
     const players = `${safe(mc,'players.online','?')} / ${safe(mc,'players.max','?')}`;
-    const version = (safe(mc,'version.name') || obj.version || '').toString();
-    const city = safe(obj,'location.city','');
-    const country = safe(obj,'location.country_name','') || safe(obj,'location.country_code','');
-    const loc = [city, country].filter(Boolean).join(', ');
-    const org = (obj.org || obj.isp || '').toString();
-    const asn = (obj.asn || '').toString();
+
+    const versionNumber = extractVersionNumber(obj, mc);
+    const protocol = safe(mc,'version.protocol',null);
+    const serverType = (obj.software || mc.software || '').toString();
+
     const hostnames = (obj.hostnames || []).join(', ');
     const tags = (obj.tags || []).slice();
     const ts = obj.timestamp ? new Date(obj.timestamp).getTime() : 0;
+
     let favicon = '';
-    const fav = safe(mc,'favicon','');
+    const fav = safe(mc,'favicon','') || (obj.icon || '');
     if (typeof fav === 'string' && fav.startsWith('data:image/')) favicon = fav;
 
-    return {_src:obj,type,ip,port,ipPort,motd,players,version,location:loc,country:country||'',org,asn,hostnames,tags,timestamp:ts,favicon,note:''};
+    return {
+      _src:obj,
+      type,
+      ip,
+      port,
+      ipPort,
+      motd,
+      players,
+      version:versionNumber,
+      serverType,
+      protocol: protocol ?? '',
+      hostnames,
+      tags,
+      timestamp:ts,
+      favicon,
+      note:''
+    };
   }
   function applyNotes(rows, notesMap){ for (const r of rows){ r.note = notesMap.get(r.ipPort) || ''; } }
-  function buildCountryFilter(){
-    const sel = $('#country'); sel.textContent='';
-    const base = document.createElement('option'); base.value=''; base.textContent='All countries'; sel.appendChild(base);
-    const list = Array.from(state.countries).sort((a,b)=>a.localeCompare(b));
-    for (const c of list){ const o=document.createElement('option'); o.value=c; o.textContent=c; sel.appendChild(o); }
+
+  // ### ADDED ### proper semantic version parsing for sorting
+  function parseVersionKey(v){
+    if (!v) return {missing:true, parts:[0,0,0]};
+    const m = String(v).match(/(\d+)(?:\.(\d+))?(?:\.(\d+))?/);
+    if (!m) return {missing:true, parts:[0,0,0]};
+    const parts = [
+      parseInt(m[1] || '0', 10),
+      parseInt(m[2] || '0', 10),
+      parseInt(m[3] || '0', 10)
+    ];
+    return {missing:false, parts};
   }
+
   function filterSort(){
     const q = $('#q').value.trim().toLowerCase();
     const t = $('#type').value;
-    const c = $('#country').value;
     const onlyNoted = $('#onlyNoted').checked;
 
     let rows = state.rows;
-    if (q || t || c || onlyNoted){
+    if (q || t || onlyNoted){
       rows = rows.filter(r=>{
         if (t && r.type !== t) return false;
-        if (c && r.country !== c) return false;
         if (onlyNoted && !r.note) return false;
         if (!q) return true;
-        const hay = [r.ipPort,r.motd,r.location,r.org,r.asn,r.hostnames,r.version,r.type,...(r.tags||[])].join(' ').toLowerCase();
+        const hay = [
+          r.ipPort,
+          r.motd,
+          r.hostnames,
+          r.version,
+          r.serverType,
+          r.type,
+          String(r.protocol||''),
+          ...(r.tags||[])
+        ].join(' ').toLowerCase();
         return hay.includes(q);
       });
     }
-    const key = state.sortKey, dir = state.sortDir==='asc'?1:-1;
+
+    const key = state.sortKey;
+    const dir = state.sortDir === 'asc' ? 1 : -1;
+
     rows.sort((a,b)=>{
-      const av=a[key]??'', bv=b[key]??'';
-      if (typeof av==='number' && typeof bv==='number') return (av-bv)*dir;
-      return av.toString().localeCompare(bv.toString())*dir;
+      if (key === 'version'){
+        const va = parseVersionKey(a.version);
+        const vb = parseVersionKey(b.version);
+
+        // missing versions always at the bottom regardless of sort direction
+        if (va.missing && vb.missing) return 0;
+        if (va.missing !== vb.missing) return va.missing ? 1 : -1;
+
+        // compare major/minor/patch
+        for (let i=0;i<3;i++){
+          const diff = va.parts[i] - vb.parts[i];
+          if (diff !== 0) return diff * dir;
+        }
+        return 0;
+      }
+
+      const av = a[key] ?? '';
+      const bv = b[key] ?? '';
+      if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir;
+      return av.toString().localeCompare(bv.toString()) * dir;
     });
-    state.filtered = rows; state.page=1; render();
+
+    state.filtered = rows;
+    state.page = 1;
+    render();
   }
+
   function setSort(key){
     if (state.sortKey===key){ state.sortDir = state.sortDir==='asc'?'desc':'asc'; }
     else { state.sortKey=key; state.sortDir = key==='timestamp'?'desc':'asc'; }
@@ -309,13 +375,14 @@
 
       const tdPlayers=document.createElement('td'); tdPlayers.textContent=r.players||'';
       const tdVer=document.createElement('td'); tdVer.textContent=r.version||'';
-      const tdLoc=document.createElement('td'); tdLoc.className='location'; tdLoc.textContent=r.location||'';
-      const tdOrg=document.createElement('td'); tdOrg.textContent = r.org ? `${r.org}${r.asn?` / ${r.asn}`:''}` : (r.asn||'');
+      const tdServerType=document.createElement('td'); tdServerType.textContent=r.serverType||'';
+      const tdProto=document.createElement('td'); tdProto.textContent=r.protocol!==''?String(r.protocol):'';
+
       const tdHosts=document.createElement('td'); tdHosts.className='hostnames'; tdHosts.textContent=r.hostnames||'';
       const tdSeen=document.createElement('td'); tdSeen.className='nowrap'; tdSeen.textContent = r.timestamp?new Date(r.timestamp).toISOString():'';
       const tdNote=document.createElement('td'); tdNote.textContent=r.note||'';
 
-      tr.append(tdIcon,tdType,tdIP,tdMotd,tdPlayers,tdVer,tdLoc,tdOrg,tdHosts,tdSeen,tdNote);
+      tr.append(tdIcon,tdType,tdIP,tdMotd,tdPlayers,tdVer,tdServerType,tdProto,tdHosts,tdSeen,tdNote);
       body.appendChild(tr);
     }
     $('#pageInfo').textContent = `Page ${state.page} / ${Math.max(1, Math.ceil(total/ps))}`;
@@ -329,7 +396,6 @@
 
   $('#q').addEventListener('input', filterSort);
   $('#type').addEventListener('change', filterSort);
-  $('#country').addEventListener('change', filterSort);
   $('#onlyNoted').addEventListener('change', filterSort);
   $('#ps').addEventListener('change', e=>{ state.pageSize=parseInt(e.target.value,10)||100; state.page=1; render(); });
   $('#prev').addEventListener('click', ()=>{ if (state.page>1){ state.page--; render(); }});
@@ -341,8 +407,6 @@
   function afterLoad(arr){
     state.raw = arr;
     const rows = arr.map(normRow);
-    state.countries = new Set(rows.map(r=>r.country).filter(Boolean));
-    buildCountryFilter();
     applyNotes(rows, state.notes);
     state.rows = rows;
     filterSort();
@@ -370,4 +434,3 @@
   </script>
 </body>
 </html>
-
